@@ -1,0 +1,23 @@
+name: CI
+on: [push]
+
+jobs:
+  default-shell:
+    name: Default shell
+    runs-on: "ubuntu-latest"
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies on Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt update
+          sudo apt install libeigen3-dev qtdeclarative5-dev qt5-qmake libqglviewer-dev-qt5 libsuitesparse-dev lcov libspdlog-dev
+      - uses: actions/setup-python@v5
+      - name: Install the package
+        run: |
+          MAKEFLAGS="-j$(nproc)" pip install -U --user -v .

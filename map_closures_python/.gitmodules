@@ -1,0 +1,3 @@
+[submodule "dependencies/g2o-python"]
+	path = dependencies/g2o-python
+	url = https://github.com/miquelmassot/g2o-python.git
