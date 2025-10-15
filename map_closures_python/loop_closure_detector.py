@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 from typing import Optional, List, NamedTuple, ClassVar, Iterator
-import threading
 from collections import namedtuple
 from itertools import count
 from density import generate_density_image_map
@@ -18,6 +17,7 @@ class LoopClosureEntry:
   descriptors: np.ndarray  # (N, 32) array of ORB descriptors
   img: np.ndarray
   position: np.ndarray = field(default_factory=lambda: np.eye(4))
+  cloud:Optional[np.ndarray] = None
   id: int = field(init=False)
   _counter: ClassVar[Iterator[int]] = count(0)
   # _lock: ClassVar[threading.Lock] = threading.Lock()
@@ -44,11 +44,11 @@ class LoopClosureDetector:
   def add_new_loop_closure_entry_from_cloud(self, cloud: np.ndarray, position: np.ndarray, resolution=0.5):
     density_img = generate_density_image_map(cloud, position=position[:3, 3], resolution=0.5)
     keypoints, descriptors = self.orb.detectAndCompute(density_img.img, None)
-    self.list_of_loop_closure_entrys.append(LoopClosureEntry(keypoints, descriptors, density_img.img, position))
+    self.list_of_loop_closure_entrys.append(LoopClosureEntry(keypoints, descriptors, density_img.img, position, cloud))
 
-  def add_new_loop_closure_entry_from_img(self, img: np.ndarray, position: np.ndarray):
+  def add_new_loop_closure_entry_from_img(self, img: np.ndarray, position: np.ndarray, cloud=None):
     keypoints, descriptors = self.orb.detectAndCompute(img, None)
-    self.list_of_loop_closure_entrys.append(LoopClosureEntry(keypoints, descriptors, img, position))
+    self.list_of_loop_closure_entrys.append(LoopClosureEntry(keypoints, descriptors, img, position, cloud))
 
   def match_and_prune_keypoints(
     self, query_entry: LoopClosureEntry, source_entry: LoopClosureEntry, lowes_ratio: float = 0.7

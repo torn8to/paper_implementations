@@ -32,7 +32,7 @@ def main():
 
   map_cloud = kiss_pipeline.get_local_map_cloud()
   pos = kiss_pipeline.get_current_position()[0:3, 3]
-  list_of_images = [(i.img, i.position) for i in map_closure_detector.list_of_loop_closure_entrys]
+  list_of_images = [(i.img, i.position, i.cloud) for i in map_closure_detector.list_of_loop_closure_entrys]
   pickle.dump(list_of_images, open("loop_closure_data_xl.pkl", "wb"))
 
   # Generate final density map for visualization

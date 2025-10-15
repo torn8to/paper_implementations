@@ -1,4 +1,5 @@
 import cv2
+import open3d as o3d
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import namedtuple
@@ -119,3 +120,17 @@ def plot_transformation_matrices(transforms, connections=None, figsize=(10, 8), 
     
     plt.tight_layout()
     return fig
+
+
+def cloud_visualization(source_np: np.ndarray, 
+                        target_np: np.ndarray):
+    print(source_np.shape, target_np.shape)
+    source_cloud = o3d.geometry.PointCloud()
+    source_cloud.points = o3d.utility.Vector3dVector(source_np)
+    target_cloud = o3d.geometry.PointCloud()
+    target_cloud.points = o3d.utility.Vector3dVector(target_np)
+    source_cloud.paint_uniform_color([1.0, 0.7, 0.0])
+    target_cloud.paint_uniform_color([0.7, 1.0, 0.0])
+    o3d.visualization.draw_geometries([source_cloud, target_cloud])
+    
+
