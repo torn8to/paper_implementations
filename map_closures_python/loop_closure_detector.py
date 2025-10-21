@@ -4,27 +4,17 @@ from collections import namedtuple
 from itertools import count
 from density import generate_density_image_map
 from ransac_c2c import ransac2d, RansacReturnModel
-from utils import convert_ransac_to_se3_pose
+from utils import convert_ransac_to_se3_pose, visualize_hbst_match
 import cv2
 import numpy as np
+import pyhbst
 
 LoopClosureCanidate = namedtuple("LoopClosureCanidate", "id match_id ransac_model matches")
 
-
-@dataclass
 class LoopClosureEntry:
-  keypoints: list  # List of OpenCV KeyPoint objects
-  descriptors: np.ndarray  # (N, 32) array of ORB descriptors
-  img: np.ndarray
-  position: np.ndarray = field(default_factory=lambda: np.eye(4))
-  cloud:Optional[np.ndarray] = None
-  id: int = field(init=False)
-  _counter: ClassVar[Iterator[int]] = count(0)
-  # _lock: ClassVar[threading.Lock] = threading.Lock()
-
-  def __post_init__(self):  # used to set id post initialization to be set by class variable counter
-    self.id = next(type(self)._counter)
-
+  _vertex_id: int = field(init=False)
+  pose:np.ndarray = None
+  img:np.ndarray = None
 
 @dataclass
 class LoopClosureDetectorReturn:
@@ -33,49 +23,74 @@ class LoopClosureDetectorReturn:
   def has_valid_canidates(self):
     return len(self.canidates) > 0
 
-
 class LoopClosureDetector:
-  def __init__(self, matched_points_threshold=35, adjacent_id_width_ignore=2):
-    self.list_of_loop_closure_entrys: List[LoopClosureEntry] = []
-    self.detector_matched_points_threshold = matched_points_threshold
-    self.orb = cv2.ORB_create()
-    self.matcher = cv2.BFMatcher_create(cv2.NORM_HAMMING, crossCheck=False)
+  _counter: ClassVar[Iterator[int]] = count(0)
+  def __init__(self, max_hamming_distance=45, n_features=1000, split_type = pyhbst.SplitEven):
+    self._last_position:Optional[np.ndarray] = None
+    self.tree = pyhbst.BinarySearchTree256()
+    self._max_hamming_distance = max_hamming_distance
+    self.tree_split = split_type
+    self.orb = cv2.ORB_create(n_features)
 
-  def add_new_loop_closure_entry_from_cloud(self, cloud: np.ndarray, position: np.ndarray, resolution=0.5):
+    self.list_of_loop_closure_entrys = []
+
+  def get_loop_closure_entry_by_id(self, id:int):
+    return self.list_of_loop_closure_entrys[id]
+
+
+  def match_and_add_new(self, cloud: np.ndarray, position: np.ndarray, resolution=0.5):
     density_img = generate_density_image_map(cloud, position=position[:3, 3], resolution=0.5)
+    id = next(self._counter)
     keypoints, descriptors = self.orb.detectAndCompute(density_img.img, None)
-    self.list_of_loop_closure_entrys.append(LoopClosureEntry(keypoints, descriptors, density_img.img, position, cloud))
+    new_lce = LoopClosureEntry(_vertex_id, pose=position, img=density_img)
 
-  def add_new_loop_closure_entry_from_img(self, img: np.ndarray, position: np.ndarray, cloud=None):
-    keypoints, descriptors = self.orb.detectAndCompute(img, None)
-    self.list_of_loop_closure_entrys.append(LoopClosureEntry(keypoints, descriptors, img, position, cloud))
+    keypoints_list = [key.pt for key in keypoints]
+    tree_matches = self.tree.matchAndAdd(keypoints_list, descriptors.tolist(), id, self._max_hamming_distance, self.tree_split)
+    top_matches = self.topk_matches(tree_matches, k = id//2 if id > 10 else id)
+    non_recent_matches = self.recency_pruning(top_matches, id, 20)
 
-  def match_and_prune_keypoints(
-    self, query_entry: LoopClosureEntry, source_entry: LoopClosureEntry, lowes_ratio: float = 0.7
-  ) -> list:
-    query_kp = query_entry.keypoints
-    query_des = query_entry.descriptors
-    source_kp = source_entry.keypoints
-    source_des = source_entry.descriptors
+    top_match = None
+    if len(non_recent_matches) > 0 and non_recent_matches[0][1] > 2:
+            top_match = tree_matches[non_recent_matches[0][0]]
+    else:
+        return None
+    match_reference = non_recent_matches[0][0]
+    visualize_top_match(top_match, new_lce.img, self.get_loop_closure_entry_by_id(match_reference)) 
 
-    matches = self.matcher.knnMatch(query_des, source_des, k=2)
-    good_matches = []
-    # TODO: change to actual form this is a placeholder original method does not use lowes ratio
-    for i, (m, n) in enumerate(matches):
-      if m.distance < lowes_ratio * n.distance:
-        good_matches.append([m])
-    return query_kp, source_kp, good_matches
+        
 
-  def find_best_possibilities_locations(self, query_entry: LoopClosureEntry, k: int = 1):
-    matches = []
-    for i in self.list_of_loop_closure_entrys:
-      kpts1, kpts2, matches = self.match_and_prune_keypoints(query_entry, i)
-      best_model, inliers = ransac2d(kpts1, kpts2, num_iterations=1000)
-      if inliers.count_nonzero > self.matched_points_threshold:
-        matches.append((i, inliers.count_nonzero()))
-    return sorted(matches, key=lambda x: x[1])[:k]
+  def eval_matches(self, tree_matches):
+    pass
 
-  def process_last_frame(self) -> Optional[LoopClosureDetectorReturn]:
+
+
+  def topk_matches(self, tree_matches, k=50):
+    list_of_tm_num = []
+    matches_comparator = lambda x: x[1]
+    for tm in tree_matches:
+      tm_len = len(tree_matches[tm])
+      if tm_len > 1:
+       list_of_tm_num.append((tm, tm_len))
+    list_of_tm_num.sort(key=matches_comparator,reverse=True)
+    if k > len(list_of_tm_num):
+      return list_of_tm_num
+    return list_of_tm_num[:k]
+
+  def recency_pruning(self, matches, id, num_iterations):
+    threshold = id-num_iterations
+    pruned_matches = []
+    for match in matches:
+        if match[0] < threshold:
+            pruned_matches.append(match)
+    return pruned_matches
+
+
+
+
+
+
+'''
+  def add_odom_check_loop_closure(self) -> Optional[LoopClosureDetectorReturn]:
     list_of_loop_closure_canidates: list[LoopClosureCanidate] = []
     if len(self.list_of_loop_closure_entrys) < 5:
       return
@@ -100,3 +115,5 @@ class LoopClosureDetector:
       if lce.id == id:
         return lce
     return None
+
+'''

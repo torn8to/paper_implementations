@@ -122,6 +122,72 @@ def plot_transformation_matrices(transforms, connections=None, figsize=(10, 8), 
     return fig
 
 
+def visualize_hbst_matches(match_object, img1, img2):
+
+    """
+    Visualize matches between two images with connecting lines.
+    Works with pyhbst match objects.
+    
+    Parameters:
+    -----------
+    img1 : numpy.ndarray
+        First image (grayscale or RGB)
+    img2 : numpy.ndarray
+        Second image (grayscale or RGB)
+    kp1 : list
+        Keypoints in first image (e.g., cv2.KeyPoint objects)
+    kp2 : list
+        Keypoints in second image (e.g., cv2.KeyPoint objects)
+    matches : list
+        List of match objects from pyhbst (e.g., cv2.DMatch objects)
+        Each match has .queryIdx and .trainIdx attributes
+    max_matches : int
+        Maximum number of matches to display
+    
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
+        The figure object containing the visualization
+    """
+    # Get image dimensions
+    h1, w1 = img1.shape[:2]
+    h2, w2 = img2.shape[:2]
+    
+    # Create side-by-side image
+    h = max(h1, h2)
+    combined = np.zeros((h, w1 + w2, 3), dtype=img1.dtype)
+    combined[:h1, :w1] = img1
+    combined[:h2, w1:w1+w2] = img2
+    
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(16, 8))
+    ax.imshow(combined, cmap='gray' if combined.shape[2] == 1 else None)
+    
+    # Draw matches
+    colors = plt.cm.hsv(np.linspace(0, 1, len(matches_to_show)))
+    
+    for match, color in zip(matches, colors):
+        # Get keypoint indices from match object
+        kpt1 = match.object_query
+        kpt2 = match.matchable_query[0]
+        
+        # Offset x2 by width of first image
+        x2_offset = x2 + w1
+        
+        # Draw line
+        ax.plot([x1, x2_offset], [y1, y2], '-', color=color, linewidth=1.5, alpha=0.7)
+        
+        # Draw keypoints
+        #ax.plot(x1, y1, 'o', color=color, markersize=6, markeredgecolor='white', markeredgewidth=1)
+        #ax.plot(x2_offset, y2, 'o', color=color, markersize=6, markeredgecolor='white', markeredgewidth=1)
+    
+    ax.axis('off')
+    ax.set_title(f'Feature Matches ({len(matches_to_show)} shown)', fontsize=14, pad=10)
+    plt.tight_layout()
+    
+    return fig
+
 def cloud_visualization(source_np: np.ndarray, 
                         target_np: np.ndarray):
     print(source_np.shape, target_np.shape)
