@@ -1,95 +1,206 @@
+"""Loop closure detection using ORB features on BEV density maps.
+
+This module wraps a binary descriptor index (pyhbst) to match incoming
+BEV images against a database and proposes loop-closure candidates.
+"""
+
 from dataclasses import dataclass, field
 from typing import Optional, List, NamedTuple, ClassVar, Iterator
 from collections import namedtuple
 from itertools import count
 from density import generate_density_image_map
 from ransac_c2c import ransac2d, RansacReturnModel
-from utils import convert_ransac_to_se3_pose, visualize_hbst_match
+from utils import convert_ransac_to_se3_pose
 import cv2
 import numpy as np
 import pyhbst
 
 LoopClosureCanidate = namedtuple("LoopClosureCanidate", "id match_id ransac_model matches")
 
+@dataclass
 class LoopClosureEntry:
-  _vertex_id: int = field(init=False)
-  pose:np.ndarray = None
-  img:np.ndarray = None
+    """Single keyframe stored for loop-closure search.
+
+    Attributes
+    ----------
+    pose : numpy.ndarray of shape (4, 4)
+        Pose of the keyframe in the world frame.
+    img : numpy.ndarray
+        Grayscale BEV density image used for feature extraction.
+    """
+    _vertex_id: int = field(init=False)
+    pose: np.ndarray = None
+    img: np.ndarray = None
+
 
 @dataclass
 class LoopClosureDetectorReturn:
-  canidates: list[LoopClosureCanidate]
+    """Return type for loop-closure proposals.
 
-  def has_valid_canidates(self):
-    return len(self.canidates) > 0
+    Attributes
+    ----------
+    canidates : list of LoopClosureCanidate
+        Proposed loop-closure matches and supporting data.
+    """
+    canidates: list[LoopClosureCanidate]
+
+    def has_valid_canidates(self):
+        """Whether at least one candidate is available.
+
+        Returns
+        -------
+        bool
+        """
+        return len(self.canidates) > 0
+
 
 class LoopClosureDetector:
-  _counter: ClassVar[Iterator[int]] = count(0)
-  def __init__(self, max_hamming_distance=45, n_features=1000, split_type = pyhbst.SplitEven):
-    self._last_position:Optional[np.ndarray] = None
-    self.tree = pyhbst.BinarySearchTree256()
-    self._max_hamming_distance = max_hamming_distance
-    self.tree_split = split_type
-    self.orb = cv2.ORB_create(n_features)
+    """Detect loop closures using ORB features indexed in a binary tree.
 
-    self.list_of_loop_closure_entrys = []
+    Parameters
+    ----------
+    max_hamming_distance : int, optional
+        Maximum allowed Hamming distance for descriptor matches.
+    n_features : int, optional
+        Number of ORB features to detect per image.
+    split_type : pyhbst.Split*, optional
+        Split strategy for the binary search tree.
 
-  def get_loop_closure_entry_by_id(self, id:int):
-    return self.list_of_loop_closure_entrys[id]
+    Attributes
+    ----------
+    tree : pyhbst.BinarySearchTree256
+        Descriptor index used for approximate matching.
+    orb : cv2.ORB
+        ORB detector/descriptor instance.
+    _max_hamming_distance : int
+    list_of_loop_closure_entrys : list[LoopClosureEntry]
+    """
+    _counter: ClassVar[Iterator[int]] = count(0)
 
+    def __init__(self, max_hamming_distance=35, n_features=500, split_type=pyhbst.SplitEven):
+        self._last_position: Optional[np.ndarray] = None
+        self.tree = pyhbst.BinarySearchTree256()
+        self._max_hamming_distance = max_hamming_distance
+        self.tree_split = split_type
+        self.orb = cv2.ORB_create(n_features)
 
-  def match_and_add_new(self, cloud: np.ndarray, position: np.ndarray, resolution=0.5):
-    density_img = generate_density_image_map(cloud, position=position[:3, 3], resolution=0.5)
-    id = next(self._counter)
-    keypoints, descriptors = self.orb.detectAndCompute(density_img.img, None)
-    new_lce = LoopClosureEntry(_vertex_id, pose=position, img=density_img)
+        self.list_of_loop_closure_entrys = []
 
-    keypoints_list = [key.pt for key in keypoints]
-    tree_matches = self.tree.matchAndAdd(keypoints_list, descriptors.tolist(), id, self._max_hamming_distance, self.tree_split)
-    top_matches = self.topk_matches(tree_matches, k = id//2 if id > 10 else id)
-    non_recent_matches = self.recency_pruning(top_matches, id, 20)
+    def get_loop_closure_entry_by_id(self, id: int):
+        """Retrieve a stored entry by its index.
 
-    top_match = None
-    if len(non_recent_matches) > 0 and non_recent_matches[0][1] > 2:
+        Parameters
+        ----------
+        id : int
+            Identifier assigned to the entry when added to the index.
+
+        Returns
+        -------
+        LoopClosureEntry
+        """
+        return self.list_of_loop_closure_entrys[id]
+
+    def match_and_add_new(self, density_img, position: np.ndarray, id):
+        """Extract features, match against the database, and add the new frame.
+
+        Parameters
+        ----------
+        density_img : DensityMap or object with attribute ``img`` (numpy.ndarray)
+            BEV density image for the current frame.
+        position : numpy.ndarray of shape (4, 4)
+            Pose of the current frame in the world frame. (Currently unused.)
+        id : int
+            Unique identifier for the current frame.
+
+        Returns
+        -------
+        tuple | None
+            ``(id, matches)`` for the best prior frame, where ``matches`` is the
+            raw match list from the tree, or ``None`` if no suitable match.
+        """
+        keypoints, descriptors = self.orb.detectAndCompute(density_img.img, None)
+        keypoints_list = [key.pt for key in keypoints]
+        tree_matches = self.tree.matchAndAdd(keypoints_list, descriptors.tolist(), id, self._max_hamming_distance, self.tree_split)
+        top_matches = self.topk_matches(tree_matches, k=id // 2 if id > 10 else id)
+        non_recent_matches = self.recency_pruning(top_matches, id, 20)
+        if len(non_recent_matches) > 5:
+            print(non_recent_matches[:5])
+        else:
+            print(non_recent_matches)
+        top_match = None
+        if len(non_recent_matches) > 0 and non_recent_matches[0][1] > 25:
             top_match = tree_matches[non_recent_matches[0][0]]
-    else:
-        return None
-    match_reference = non_recent_matches[0][0]
-    visualize_top_match(top_match, new_lce.img, self.get_loop_closure_entry_by_id(match_reference)) 
+        else:
+            return None
+        return (id, top_match)
 
-        
+    def eval_matches(self, tree_matches):
+        """Evaluate match sets and compute an overall score.
 
-  def eval_matches(self, tree_matches):
-    pass
+        Parameters
+        ----------
+        tree_matches : dict[int, list]
+            Mapping from prior frame id to list of descriptor matches.
+
+        Returns
+        -------
+        Any
+            Not implemented.
+        """
+        pass
+
+    def topk_matches(self, tree_matches, k=50):
+        """Select top-k prior frames by number of descriptor matches.
+
+        Parameters
+        ----------
+        tree_matches : dict[int, list]
+            Mapping from prior frame id to list of matches.
+        k : int, default: 50
+            Number of top entries to return.
+
+        Returns
+        -------
+        list[tuple[int, int]]
+            List of ``(frame_id, count)`` sorted by count descending.
+        """
+        list_of_tm_num = []
+        matches_comparator = lambda x: x[1]
+        for tm in tree_matches:
+            tm_len = len(tree_matches[tm])
+            if tm_len > 1:
+                list_of_tm_num.append((tm, tm_len))
+        list_of_tm_num.sort(key=matches_comparator, reverse=True)
+        if k > len(list_of_tm_num):
+            return list_of_tm_num
+        return list_of_tm_num[:k]
+
+    def recency_pruning(self, matches, id, num_iterations):
+        """Filter out matches that are too recent.
+
+        Parameters
+        ----------
+        matches : list[tuple[int, int]]
+            List of candidate matches ``(frame_id, count)``.
+        id : int
+            Current frame id.
+        num_iterations : int
+            Minimum separation from current id.
+
+        Returns
+        -------
+        list[tuple[int, int]]
+            Pruned list with ``frame_id < id - num_iterations``.
+        """
+        threshold = id - num_iterations
+        pruned_matches = []
+        for match in matches:
+            if match[0] < threshold:
+                pruned_matches.append(match)
+        return pruned_matches
 
 
-
-  def topk_matches(self, tree_matches, k=50):
-    list_of_tm_num = []
-    matches_comparator = lambda x: x[1]
-    for tm in tree_matches:
-      tm_len = len(tree_matches[tm])
-      if tm_len > 1:
-       list_of_tm_num.append((tm, tm_len))
-    list_of_tm_num.sort(key=matches_comparator,reverse=True)
-    if k > len(list_of_tm_num):
-      return list_of_tm_num
-    return list_of_tm_num[:k]
-
-  def recency_pruning(self, matches, id, num_iterations):
-    threshold = id-num_iterations
-    pruned_matches = []
-    for match in matches:
-        if match[0] < threshold:
-            pruned_matches.append(match)
-    return pruned_matches
-
-
-
-
-
-
-'''
+"""
   def add_odom_check_loop_closure(self) -> Optional[LoopClosureDetectorReturn]:
     list_of_loop_closure_canidates: list[LoopClosureCanidate] = []
     if len(self.list_of_loop_closure_entrys) < 5:
@@ -116,4 +227,4 @@ class LoopClosureDetector:
         return lce
     return None
 
-'''
+"""
