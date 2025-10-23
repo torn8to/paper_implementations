@@ -1,52 +1,50 @@
 import numpy as np
-import scipy
+
+def se3_log(T):
+    """
+    Convert 4x4 SE3 transform matrix to 6x1 twist vector (se3 tangent).
+    Order: [vx, vy, vz, wx, wy, wz]
+    """
+    R = T[:3, :3]
+    t = T[:3, 3]
+
+    # rotation angle
+    cos_theta = (np.trace(R) - 1.0) / 2.0
+    cos_theta = np.clip(cos_theta, -1.0, 1.0)
+    theta = np.arccos(cos_theta)
+
+    if np.isclose(theta, 0.0):
+        # small-angle approximation
+        w = np.zeros(3)
+        V_inv = np.eye(3)
+    else:
+        # axis of rotation
+        w_hat = (R - R.T) / (2.0 * np.sin(theta))
+        w = np.array([w_hat[2,1], w_hat[0,2], w_hat[1,0]]) * theta
+
+        A = np.sin(theta) / theta
+        B = (1 - np.cos(theta)) / (theta ** 2)
+        V_inv = np.eye(3) - 0.5 * w_hat + (1 - A / (2 * B)) / (theta ** 2) * (w_hat @ w_hat)
+
+    v = V_inv @ t
+    xi = np.concatenate([v, w])
+    return xi
 
 
-def get_se3_difference(pose1: np.ndarray, pose2: np.ndarray, homogenous_return=true) -> tuple(np.ndarray):
-  """
-  Computes the relative SE(3) transformation between two poses.
-
-  Args:
-      pose1 (np.ndarray): The first pose as a 4x4 transformation matrix.
-      pose2 (np.ndarray): The second pose as a 4x4 transformation matrix.
-      homogenous_return (bool, optional): If True, returns the result as a homogeneous transformation matrix. Defaults to True.
-
-  Returns:
-      tuple(np.ndarray): The relative transformation from pose1 to pose2.
-  """
-  if homogenous_return == True:
-    return np.linalg.inv(pose1) @ pose2
-  else:
-    p_rel = np.linalg.inv(pose1) @ pose2
-    angle = np.arccos((np.trace(R) - 1) / 2.0)
-  if abs(angle) < 1e-9:
-    axis = np.zeros(3)
-  else:
-    axis = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / (2 * np.sin(angle))
-  rotvec = axis * angle
-  return p_rel[:3, 3], rotvec
+def se3_hat(T):
+    pass
 
 
-def get_covariance_matrix_with_rel_pose(pose1: np.ndarray, pose2: np.ndarray, covariance_uncertainty_multiplier) -> tuple(np.ndarray, np.ndarray):
-  """
-  Computes the covariance matrix associated with the relative pose between two SE(3) poses.
+def get_covariance_matrix(latest_pose: np.ndarray, last_pose: np.ndarray, covariance_uncertainty_multiplier:float) -> np.ndarray:
+    """
+    Computes the covariance matrix associated with the relative pose between two SE(3) poses used for generating accumulation in pose graph optimization.
 
-  Args:
-      pose1 (np.ndarray): The first pose as a 4x4 transformation matrix.
-      pose2 (np.ndarray): The second pose as a 4x4 transformation matrix.
+    Args:
+        latest_pose (np.ndarray): The first pose as a 4x4 transformation matrix.
+        last_pose (np.ndarray): The second pose as a 4x4 transformation matrix.
 
-  Returns:
-      tuple(np.ndarray, np.ndarray): A tuple containing thethe relative pose as 4x4 homogenous trnasform matrix and 6 x6 covariance matrix where they think .
-  """
-  p_rel = get_se3_difference(pose1, pose2)
-  xyz, euler = get_se3_difference(pose1, pose2, False)
-  np.diag(
-    [
-      xyz[0] * covariance_uncertainty_multiplier,
-      xyz[1] * covariance_uncertainty_multiplier,
-      xyz[2] * covariance_uncertainty_multiplier,
-      euler[0] * covariance_uncertainty_multiplier,
-      euler[1] * covariance_uncertainty_multiplier,
-      euler[2] * covariance_uncertainty_multiplier,
-    ]
-  )
+    Returns:
+        np.ndarray: and 6x6 covariance matrix 
+    """
+    twist = se3_log(latest_pose @ np.linalg.inv(last_pose))
+    return np.diag(twist)

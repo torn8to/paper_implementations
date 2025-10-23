@@ -19,8 +19,8 @@ dependencies = [
 
 [tool.ruff]
 include=["*.py"]
-line-length=120
-indent-width=2
+line-length=150
+indent-width=4
 
 
 [tool.ruff.format]
