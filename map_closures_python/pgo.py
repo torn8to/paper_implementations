@@ -9,7 +9,6 @@ import numpy as np
 from itertools import count
 from typing import Optional
 
-print(dir(g2o.SparseOptimizer))
 class PGO:
     """Minimal pose-graph optimizer.
 
@@ -21,22 +20,20 @@ class PGO:
         Block solver used by the optimizer.
     _algorithm : g2o.OptimizationAlgorithmLevenberg
         Optimization algorithm.
-    vertex_count : itertools.count
-        Monotonic counter used to assign vertex ids.
     """
     def __init__(self):
+        self.latest_vertex_id = 0
         self._optimizer = g2o.SparseOptimizer()
         self._solver = g2o.BlockSolverX(g2o.LinearSolverDenseX())
         self._algorithm = g2o.OptimizationAlgorithmLevenberg(self._solver)
         self._optimizer.set_algorithm(self._algorithm)
-        self.vertex_count = count(0)
         vertex_se3 = g2o.VertexSE3()
         vertex_se3.set_estimate(g2o.Isometry3d())
-        vertex_se3.set_id(next(self.vertex_count))
+        vertex_se3.set_id(0)
         vertex_se3.set_fixed(True)
         self._optimizer.add_vertex(vertex_se3)
 
-    def add_odom(self, current_pose, last_pose, covariance_matrix:Optional[np.ndarray]=None)->None:
+    def add_odom(self, id:int, current_odometry_pose, last_odometry_pose, covariance_matrix:Optional[np.ndarray]=None)->None:
         """Add an odometry edge between consecutive poses and a new vertex.
 
         Parameters
@@ -47,29 +44,31 @@ class PGO:
             Previous pose T_wl in homogeneous coordinates.
         covariance_matrix : numpy.ndarray of shape (6, 6), optional
             Measurement covariance for the SE3 constraint.
-
         Returns
         -------
         None
         """
-        relative_pose = current_pose @ np.linalg.inv(last_pose)
-        estimate_isometry = g2o.Isometry3d(relative_pose[:3, :3], relative_pose[3,:3])
-        current_isometry = g2o.Isometry3d(current_pose[:3, :3], current_pose[3, :3])
+        assert(isinstance(id, int), f"id is of wrong type expect {int} got {type(id)}" )
+        assert(last_odometry_pose.shape == (4,4), "last pose is inot 4x4 homogenous transformation matrix")
+        assert(current_odometry_pose.shape == (4,4), "last pose is inot 4x4 homogenous transformation matrix")
+        relative_pose = current_odometry_pose @ np.linalg.inv(last_odometry_pose)
+        new_measurement_pose = relative_pose @ self.position()
+        estimate_isometry = g2o.Isometry3d(relative_pose[:3, :3], relative_pose[:3,3])
+        current_isometry = g2o.Isometry3d(new_measurement_pose[:3, :3], new_measurement_pose[:3, 3])
         vertex_se3 = g2o.VertexSE3()
-        current_vertex_id = next(self.vertex_count)
-        vertex_se3.set_id(current_vertex_id)
+        vertex_se3.set_id(id)
         vertex_se3.set_estimate(current_isometry)
-
         edge_se3 = g2o.EdgeSE3()
-        edge_se3.set_vertex(0, self.get_vertex_by_id(current_vertex_id-1))
-        edge_se3.set_vertex(1, self.get_vertex_by_id(current_vertex_id))
+        edge_se3.set_vertex(0, self.get_vertex_by_id(id-1))
+        edge_se3.set_vertex(1, self.get_vertex_by_id(id))
         edge_se3.set_measurement(estimate_isometry)
-        if covariance_matrix != None:
-            edge_se3.set_information(information_matrix)
+        if covariance_matrix is not None:
+            edge_se3.set_information(np.linalg.inv(covariance_matrix))
         self._optimizer.add_vertex(vertex_se3)
         self._optimizer.add_edge(edge_se3)
+        self.latest_vertex_id = id
 
-    def add_loop_closure_edge(self, id_: int, match_id: int, relative_pose: np.ndarray, covariance_matrix: Optional[np.ndarray] =None):
+    def add_loop_closure_edge(self, id: int, match_id: int, relative_pose: np.ndarray, covariance_matrix: Optional[np.ndarray] =None):
         """Add a loop-closure constraint between two existing vertices.
 
         Parameters
@@ -87,30 +86,17 @@ class PGO:
         -------
         None
         """
-        relative_pose_g2o = g2o.Isometry3d(relative_pose[:3, :3], relative_pose[3, :3])
+        relative_pose_g2o = g2o.Isometry3d(relative_pose[:3, :3], relative_pose[:3, 3])
         edge_se3 =  g2o.EdgeSE3()
-        edge_se3.set_vertex(0, id)
-        edge_se3.set_vertex(1, match_id)
+        edge_se3.set_vertex(0, self.get_vertex_by_id(id))
+        edge_se3.set_vertex(1, self.get_vertex_by_id(match_id))
         edge_se3.set_measurement(relative_pose_g2o)
         if covariance_matrix != None:
             edge_se3.set_information(np.linalg.inv(covariance_matrix))
         self._optimizer.add_edge(edge_se3)
 
-    def get_vertex_by_id(self, id: int) -> g2o.VertexSE3:
-        """Get a vertex by id.
 
-        Parameters
-        ----------
-        id : int
-            Vertex identifier.
-
-        Returns
-        -------
-        g2o.VertexSE3
-        """
-        return self._optimizer.vertex(id)
-
-    def optimize(self, iterations: int = 500, verbose: bool = True):
+    def optimize(self, iterations: int = 500, verbose: bool = False):
         """Run pose-graph optimization.
 
         Parameters
@@ -126,7 +112,8 @@ class PGO:
         """
         self._optimizer.initialize_optimization()
         self._optimizer.set_verbose(verbose)
-        self._optimizer.optimize(20)
+        self._optimizer.optimize(iterations)
+
 
     def save(self, name:str="pose_graph.g2o"):
         """Serialize the current graph to a .g2o file.
@@ -142,7 +129,21 @@ class PGO:
         """
         self._optimizer.save(name)
 
-    def get_vertex_poses() -> list[np.ndarray]:
+    def get_vertex_by_id(self, id: int) -> g2o.VertexSE3:
+        """Get a vertex by id.
+
+        Parameters
+        ----------
+        id : int
+            Vertex identifier.
+
+        Returns
+        -------
+        g2o.VertexSE3
+        """
+        return self._optimizer.vertex(id)
+
+    def get_vertex_poses(self) -> list[np.ndarray]:
         """Return all vertex poses as 4x4 arrays.
 
         Returns
@@ -150,15 +151,15 @@ class PGO:
         list of numpy.ndarray
             List of SE3 homogeneous matrices, in vertex id order.
         """
-        pass
+        return [self._optimizer.vertex(i).estimate().matrix() for i in sorted(self._optimizer.vertices.keys())]
 
-    def get_all_edges() -> list[tuple[int, int]]:
-        """Return all edges as (from_id, to_id) tuples.
+    def position(self):
+        """Return all vertex poses as 4x4 arrays.
 
         Returns
         -------
-        list of tuple[int, int]
-            Edge endpoint ids.
+        numpy.ndarray
+            SE3 homogeneous transformation matrix of the latest vertex
         """
-        pass
+        return self._optimizer.vertex(self.latest_vertex_id).estimate().matrix()
 

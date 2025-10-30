@@ -190,7 +190,6 @@ def visualize_hbst_matches(match_object, img1, img2):
 
 def cloud_visualization(source_np: np.ndarray, 
                         target_np: np.ndarray):
-    print(source_np.shape, target_np.shape)
     source_cloud = o3d.geometry.PointCloud()
     source_cloud.points = o3d.utility.Vector3dVector(source_np)
     target_cloud = o3d.geometry.PointCloud()
