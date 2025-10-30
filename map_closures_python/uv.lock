@@ -513,6 +513,7 @@ dependencies = [
     { name = "opencv-python-headless" },
     { name = "pandas" },
     { name = "pybind11" },
+    { name = "rich" },
     { name = "scipy" },
     { name = "tqdm" },
 ]
@@ -527,6 +528,7 @@ requires-dist = [
     { name = "opencv-python-headless", specifier = ">=4.11.0.86" },
     { name = "pandas", specifier = ">=2.3.2" },
     { name = "pybind11", specifier = ">=3.0.1" },
+    { name = "rich", specifier = ">=14.1.0" },
     { name = "scipy", specifier = ">=1.14.0" },
     { name = "tqdm", specifier = ">=4.66.0" },
 ]

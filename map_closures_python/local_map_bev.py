@@ -33,6 +33,7 @@ class LocalMapBev:
     max_range : float
     voxel_size : float
     alpha : float
+        a coefficient that adjusts the size of maps compared to 
 
     Examples
     --------
@@ -57,6 +58,7 @@ class LocalMapBev:
             max_distance=self.max_range,
             max_points_per_voxel=max_points_per_voxel)
         self.current_position = np.eye(4)
+
 
     def clear(self):
         """Remove all points from the internal voxel map.
@@ -109,7 +111,7 @@ class LocalMapBev:
         """
         return self.map.point_cloud()
 
-    def bev_density_image(self, resolution):
+    def bev_density_image(self, resolution) -> np.ndarray:
         """Compute a bird's-eye-view density image from the local map.
 
         Parameters
@@ -127,7 +129,7 @@ class LocalMapBev:
                                           self.max_range,
                                           position=self.current_position[:3, 3])
 
-    def position(self):
+    def position(self) -> np.ndarray:
         """Return the latest sensor pose.
 
         Returns

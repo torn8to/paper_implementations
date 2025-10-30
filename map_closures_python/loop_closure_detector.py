@@ -5,7 +5,7 @@ BEV images against a database and proposes loop-closure candidates.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List, NamedTuple, ClassVar, Iterator
+from typing import Optional, List, ClassVar, Iterator, Callable
 from collections import namedtuple
 from itertools import count
 from density import generate_density_image_map
@@ -14,6 +14,7 @@ from utils import convert_ransac_to_se3_pose
 import cv2
 import numpy as np
 import pyhbst
+from copy import deepcopy
 
 LoopClosureCanidate = namedtuple("LoopClosureCanidate", "id match_id ransac_model matches")
 
@@ -72,19 +73,31 @@ class LoopClosureDetector:
         Descriptor index used for approximate matching.
     orb : cv2.ORB
         ORB detector/descriptor instance.
-    _max_hamming_distance : int
+    max_hamming_distance : int
     list_of_loop_closure_entrys : list[LoopClosureEntry]
     """
     _counter: ClassVar[Iterator[int]] = count(0)
 
-    def __init__(self, max_hamming_distance=35, n_features=500, split_type=pyhbst.SplitEven):
+    def __init__(self,
+                 resolution:float = 0.5,
+                 max_hamming_distance=35,
+                 n_features=500,
+                 split_type=pyhbst.SplitEven,
+                 ransac_inlier_threshold: float = 3.0,
+                 match_criteria_threshold: int = 25,
+                 post_ransac_threshold: int = 25,
+                 distance_threshold=15):
+        self.bev_resolution = resolution
+        self.distance_threshold = distance_threshold
         self._last_position: Optional[np.ndarray] = None
         self.tree = pyhbst.BinarySearchTree256()
-        self._max_hamming_distance = max_hamming_distance
+        self.max_hamming_distance = max_hamming_distance
         self.tree_split = split_type
         self.orb = cv2.ORB_create(n_features)
-
-        self.list_of_loop_closure_entrys = []
+        self.inlier_threshold = ransac_inlier_threshold
+        self.ransac_threshold = match_criteria_threshold
+        self.post_ransac_threshold = post_ransac_threshold
+        self.list_of_loop_closure_entrys:list[tuple] = []
 
     def get_loop_closure_entry_by_id(self, id: int):
         """Retrieve a stored entry by its index.
@@ -100,7 +113,17 @@ class LoopClosureDetector:
         """
         return self.list_of_loop_closure_entrys[id]
 
-    def match_and_add_new(self, density_img, position: np.ndarray, id):
+
+    def extract_keypoints_from_match(self,match_obj):
+        query = []
+        source = []
+        for i in range(len(match_obj)):
+            query.append(match_obj[i].object_query)
+            source.append(match_obj[i].object_references[0])
+        return (query, source)
+    
+
+    def match_and_add_new(self, density_img, position: np.ndarray, id)->Optional[tuple[int,RansacReturnModel,]]:
         """Extract features, match against the database, and add the new frame.
 
         Parameters
@@ -118,36 +141,29 @@ class LoopClosureDetector:
             ``(id, matches)`` for the best prior frame, where ``matches`` is the
             raw match list from the tree, or ``None`` if no suitable match.
         """
+        distance_pruning: Callable[tuple[int, result, np.ndarray], bool] = lambda x: np.linalg.norm(x[1].t) > self.distance_threshold
         keypoints, descriptors = self.orb.detectAndCompute(density_img.img, None)
         keypoints_list = [key.pt for key in keypoints]
-        tree_matches = self.tree.matchAndAdd(keypoints_list, descriptors.tolist(), id, self._max_hamming_distance, self.tree_split)
+        tree_matches = self.tree.matchAndAdd(keypoints_list, descriptors.tolist(), id, self.max_hamming_distance, self.tree_split)
         top_matches = self.topk_matches(tree_matches, k=id // 2 if id > 10 else id)
         non_recent_matches = self.recency_pruning(top_matches, id, 20)
-        if len(non_recent_matches) > 5:
-            print(non_recent_matches[:5])
-        else:
-            print(non_recent_matches)
-        top_match = None
-        if len(non_recent_matches) > 0 and non_recent_matches[0][1] > 25:
-            top_match = tree_matches[non_recent_matches[0][0]]
-        else:
+        
+        if len(non_recent_matches) == 0:
             return None
-        return (id, top_match)
+        ransac_list = []
+        
+        for i in non_recent_matches:
+            query_id = i[0]
+            match = tree_matches[i[0]]
+            query_pts, source_pts = self.extract_keypoints_from_match(match)
+            result = ransac2d(query_pts, source_pts,inlier_threshold=self.ransac_threshold)
+            ransac_list.append((query_id, result, convert_ransac_to_se3_pose(result, self.bev_resolution)))
 
-    def eval_matches(self, tree_matches):
-        """Evaluate match sets and compute an overall score.
-
-        Parameters
-        ----------
-        tree_matches : dict[int, list]
-            Mapping from prior frame id to list of descriptor matches.
-
-        Returns
-        -------
-        Any
-            Not implemented.
-        """
-        pass
+        conditional: Callable[tuple[int, result], bool] = lambda x: len(x[1].inliers) > self.post_ransac_threshold
+        inlier_filtered_list = [i for i in ransac_list if conditional(i)]
+        distance_filtered_list = [i for i in inlier_filtered_list if distance_pruning(i)]
+        print(f"inlier_filtered length {len(inlier_filtered_list)} distance_filtered {len(distance_filtered_list)}")
+        return distance_filtered_list
 
     def topk_matches(self, tree_matches, k=50):
         """Select top-k prior frames by number of descriptor matches.
@@ -168,14 +184,14 @@ class LoopClosureDetector:
         matches_comparator = lambda x: x[1]
         for tm in tree_matches:
             tm_len = len(tree_matches[tm])
-            if tm_len > 1:
+            if tm_len > 1: # minimum threshold for matches to build 
                 list_of_tm_num.append((tm, tm_len))
         list_of_tm_num.sort(key=matches_comparator, reverse=True)
         if k > len(list_of_tm_num):
             return list_of_tm_num
         return list_of_tm_num[:k]
 
-    def recency_pruning(self, matches, id, num_iterations):
+    def recency_pruning(self, matches, id, num_iterations=200):
         """Filter out matches that are too recent.
 
         Parameters
@@ -198,33 +214,3 @@ class LoopClosureDetector:
             if match[0] < threshold:
                 pruned_matches.append(match)
         return pruned_matches
-
-
-"""
-  def add_odom_check_loop_closure(self) -> Optional[LoopClosureDetectorReturn]:
-    list_of_loop_closure_canidates: list[LoopClosureCanidate] = []
-    if len(self.list_of_loop_closure_entrys) < 5:
-      return
-    last_frame = self.list_of_loop_closure_entrys[-1]
-    for lce in self.list_of_loop_closure_entrys[:-3]:  # skip adjacent frame to last as we already have a connection in the graph
-      kpts1, kpts2, matches = self.match_and_prune_keypoints(last_frame, lce)
-      
-      if len(matches) <= self.detector_matched_points_threshold:
-        # shortcut the ransac step if their are not enough points as their is no need to run points if does not meet the matched threshold
-        continue
-      ransac_model: RansacReturnModel = ransac2d(kpts1, kpts2, matches, num_iterations=1000)
-      ransac_pruned_matches: list[bool] = np.asarray(matches, dtype=object)[ransac_model.inliers].tolist()
-      if len(matches) > self.detector_matched_points_threshold:
-        list_of_loop_closure_canidates.sort(key=lambda x: int(np.count_nonzero(x.ransac_model.inliers)))
-        list_of_loop_closure_canidates.append(
-          LoopClosureCanidate(last_frame.id, lce.id, ransac_model, matches)
-        )
-    return LoopClosureDetectorReturn(canidates=list_of_loop_closure_canidates)
-
-  def get_entry_by_id(self, id: int) -> Optional[LoopClosureEntry]:
-    for lce in iter(self.list_of_loop_closure_entrys):
-      if lce.id == id:
-        return lce
-    return None
-
-"""

@@ -6,24 +6,22 @@ from collections import namedtuple
 RansacReturnModel = namedtuple("RansacReturnModel", "so2 t theta inliers")
 
 
-def ransac2d(kpts1, kpts2, matches, num_iterations=100, inlier_threshold=3.0):
+def ransac2d(kpts1: int, kpts2: int, num_iterations: int = 100, inlier_threshold: float=3.0)-> RansacReturnModel:
   """
   args:
       kpts1: source keypoints
       kpts2: target keypoints
-      matches: matched keypoints
       num_iterrations: the number oif iterations to run ransac over
       num_iterrations: the number oif iterations to run ransac over
   """
-  # Get two parallel arrays of matched keypoints for points
-  query_pts = np.array([kpts1[m[0].queryIdx].pt for m in matches], dtype=np.float32)
-  train_pts = np.array([kpts2[m[0].trainIdx].pt for m in matches], dtype=np.float32)
+  query_pts = np.array(kpts1, dtype=np.float32)
+  train_pts = np.array(kpts2, dtype=np.float32)
 
   best_inliers = []
   best_transform, best_t, best_theta = np.eye(2), np.zeros(2), 0.0
 
   for _ in range(num_iterations):
-    i, j = random.sample(range(len(matches)), 2)
+    i, j = random.sample(range(len(kpts1)), 2)
     i_pt1, i_pt2 = query_pts[i], train_pts[i]
     j_pt1, j_pt2 = query_pts[j], train_pts[j]
 
@@ -38,12 +36,11 @@ def ransac2d(kpts1, kpts2, matches, num_iterations=100, inlier_threshold=3.0):
       best_inliers = inliers
       best_transform, best_t, best_theta = R, t, theta
 
-    # check inliers)
   return RansacReturnModel(best_transform, best_t, best_theta, best_inliers)
 
 
 def estimate_se2_from_set(p1: np.ndarray, p2: np.ndarray, q1: np.ndarray, q2: np.ndarray):
-  """
+  """ convert the 2 pairs of points between images to set a transform
   args:
       p1: source point 1
       p2: source point 2
