@@ -10,6 +10,7 @@ from kiss_icp.voxelization import voxel_down_sample
 from density import generate_density_image_map
 import numpy as np
 
+
 class LocalMapBev:
     """Maintain a local voxel map and render BEV density images.
 
@@ -33,7 +34,7 @@ class LocalMapBev:
     max_range : float
     voxel_size : float
     alpha : float
-        a coefficient that adjusts the size of maps compared to 
+        a coefficient that adjusts the size of maps compared to
 
     Examples
     --------
@@ -45,20 +46,13 @@ class LocalMapBev:
     >>> isinstance(lm.cloud(), np.ndarray)
     True
     """
-    def __init__(self, max_points_per_voxel: int = 13,
-                 max_range: float = 100.0,
-                 voxel_size: float = 1.0,
-                 alpha: float = 0.5):
 
+    def __init__(self, max_points_per_voxel: int = 13, max_range: float = 100.0, voxel_size: float = 1.0, alpha: float = 0.5):
         self.max_range: float = max_range
         self.voxel_size: float = voxel_size
         self.alpha: float = alpha
-        self.map = VoxelHashMap(
-            voxel_size=self.voxel_size,
-            max_distance=self.max_range,
-            max_points_per_voxel=max_points_per_voxel)
+        self.map = VoxelHashMap(voxel_size=self.voxel_size, max_distance=self.max_range, max_points_per_voxel=max_points_per_voxel)
         self.current_position = np.eye(4)
-
 
     def clear(self):
         """Remove all points from the internal voxel map.
@@ -78,7 +72,11 @@ class LocalMapBev:
         """
         self.map.clear()
 
-    def add_reading(self, cloud: np.ndarray, position: np.ndarray,):
+    def add_reading(
+        self,
+        cloud: np.ndarray,
+        position: np.ndarray,
+    ):
         """Insert a point cloud measurement into the local map.
 
         Parameters
@@ -124,10 +122,7 @@ class LocalMapBev:
         numpy.ndarray
             2D BEV density image centered at the current position.
         """
-        return generate_density_image_map(self.cloud(),
-                                          resolution,
-                                          self.max_range,
-                                          position=self.current_position[:3, 3])
+        return generate_density_image_map(self.cloud(), resolution, self.max_range, position=self.current_position[:3, 3])
 
     def position(self) -> np.ndarray:
         """Return the latest sensor pose.

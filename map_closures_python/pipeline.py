@@ -6,6 +6,8 @@ from itertools import count
 from collections import namedtuple
 from typing import Optional, List, Iterator
 import numpy as np
+from covariance import odom_covariance_calculation, icp_covariance_calculation
+from profiler import persistent_profile
 
 LoopClosureIds = namedtuple("LoopClosureIds", ["id1", "id2", "estimate", "covariance"])
 
@@ -22,6 +24,7 @@ class OptimizationPipelineConfig:
     pose_diff: float = 15.0
     matched_points_thredhold_alpha: int = 25
     ransac_matching_threshold: int = 25
+
 
 class OptimizationPipeline:
     """Maintain a local voxel map and render BEV density images.
@@ -50,7 +53,7 @@ class OptimizationPipeline:
     observation_to_odom_map: dict
         a dictionary to map loop_closure entries to odom readings
     lcd : LoopClosureDetector
-        this object encompasses a way to get optimal map closures stores the  
+        this object encompasses a way to get optimal map closures stores the
         keypoint matching and ransac portion of the pipeline
     lmb: LocalMapBev
         manages the sparse voxel hashmap to perform point comparisons and generate density birds eye view images
@@ -59,6 +62,7 @@ class OptimizationPipeline:
     self.loop_closure_tags: list[LoopClosureIds]
         a list of tuple storing ids of vertexes of a loop closure for storage mostly for visualization
     """
+
     _counter: Iterator = count(0)
 
     def __init__(self, config: OptimizationPipelineConfig = OptimizationPipelineConfig()):
@@ -66,61 +70,66 @@ class OptimizationPipeline:
         self.bev_resolution = config.bev_resolution
         self.graph_optimizer: PGO = PGO()
         self.last_registered_pose = np.eye(4)
-        self.lcd: LoopClosureDetector = LoopClosureDetector(max_hamming_distance=config.max_hamming_distance,
-                                                            n_features=config.n_features)
-        self.lmb: LocalMapBev = LocalMapBev(max_points_per_voxel=config.max_points_per_voxel,
-                                            max_range=config.max_range,
-                                            voxel_size=config.voxel_size,
-                                            alpha=config.alpha)
+        self.lcd: LoopClosureDetector = LoopClosureDetector(max_hamming_distance=config.max_hamming_distance, n_features=config.n_features)
+        self.lmb: LocalMapBev = LocalMapBev(
+            max_points_per_voxel=config.max_points_per_voxel, max_range=config.max_range, voxel_size=config.voxel_size, alpha=config.alpha
+        )
 
         self.loop_closure_tags: list[LoopClosureIds] = []
 
-    def update(self, cloud, new_odom, covariance_matrix: Optional[np.ndarray]=None) -> Optional[LoopClosureIds]:
+    @persistent_profile(starts_after=100, sort_by="cumtime", lines=20)
+    def update(self, cloud, new_odom, last_odom, covariance_matrix: Optional[np.ndarray] = None) -> Optional[LoopClosureIds]:
         """Update the state of the loop closure
         cloud: np.ndarray
             a point cloud
         new_odom: np.ndarray
             a new odometry reading to update the backend
         covariance_matrix: Optional[np.ndarray]
-            if the covariance matrix is not None it gets added to the pose graph optimizer setting the wieight 
+            if the covariance matrix is not None it gets added to the pose graph optimizer setting the wieight
             recomended for better pose graph optimization
         """
         id = next(self._counter)
-
         self.lmb.add_reading(cloud, new_odom)
-        self.graph_optimizer.add_odom(id, new_odom, self.lmb.position(), covariance_matrix)
+        self.graph_optimizer.add_odom(id, new_odom, last_odom, covariance_matrix)
         new_loop_closures_added: List[LoopClosureIds] = []
+        bev_density_img = self.lmb.bev_density_image(self.bev_resolution)
+
         if np.linalg.norm(new_odom[:3, 3] - self.last_registered_pose[:3, 3]) > self.config.pose_diff:
-            bev_density_img = self.lmb.bev_density_image(self.bev_resolution)
-            lcdids = self.lcd.match_and_add_new(bev_density_img, self.lmb.position(), id)
+            lcdids = self.lcd.match(bev_density_img, self.lmb.position(), id)
+            self.lcd.add(bev_density_img, id)
             self.last_registered_pose = self.lmb.position()
-            if lcdids is not None:
-                for i in lcdids:
-                    new_loop_closures_added.append((id, i[0], np.linalg.norm(i[1].t)))
-                    self.graph_optimizer.add_loop_closure_edge(id, i[0], i[2][0])
-            if len(new_loop_closures_added) > 0:
-                self.graph_optimizer.optimize(iterations=20)
+        else:
+            lcdids = self.lcd.match(bev_density_img, self.lmb.position(), id)
+
+        if lcdids is not None:
+            for i in lcdids:
+                new_loop_closures_added.append((id, i[0], np.linalg.norm(i[1].t)))
+                self.graph_optimizer.add_loop_closure_edge(id, i[0], i[2][0])
+
+        if len(new_loop_closures_added) > 0:
+            self.graph_optimizer.optimize(iterations=5)
+
         return new_loop_closures_added
 
     def pgo_position(self):
-        """returns the slam position of the last added vertex
-        """
+        """returns the slam position of the last added vertex"""
         return self.graph_optimizer.position()
 
     def odom_position(self):
-        """returns the last odometry position given as an update 
-        """
+        """returns the last odometry position given as an update"""
         return self.last_registered_pose
 
     def get_vertices_np(self) -> List[np.ndarray]:
-        """returns the vertices by vertex id as a list of numpy arrays
-        """
+        """returns the vertices by vertex id as a list of numpy arrays"""
         return self.graph_optimizer.get_vertex_poses()
 
     def get_all_loop_closure_ids(self) -> List[LoopClosureIds]:
-        """ returns all loop loop closures
-        """
+        """returns all loop loop closures"""
         return self.loop_closure_tags
 
     def point_cloud(self) -> np.ndarray:
+        """returns the point cloud underlying the bev image generator"""
         self.lmb.cloud()
+
+    def optimizer_save(self):
+        self.pgo.save_optimizer()

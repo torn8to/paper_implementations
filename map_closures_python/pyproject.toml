@@ -27,3 +27,17 @@ indent-width=4
 [tool.ruff.format]
 docstring-code-format = false
 indent-style="space"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "Cython", "numpy"]
+build-backend = "setuptools.build_meta"
+
+
+[tool.setuptools.packages.find]
+where= ["./"]
+include =[
+  "directories","cython_modules"
+]
+exclude =["profiles", "media", ]
+
+

@@ -11,7 +11,7 @@ list_imgs_pos = pickle.load(open("loop_closure_data_xl.pkl", "rb"))
 
 lcd = LoopClosureDetector()
 for tup in list_imgs_pos:
-  lcd.add_new_loop_closure_entry_from_img(tup[0], tup[1], tup[2])
+    lcd.add_new_loop_closure_entry_from_img(tup[0], tup[1], tup[2])
 list_lce = lcd.list_of_loop_closure_entrys
 
 last_entry = list_lce[-1]
@@ -27,7 +27,7 @@ print(f"Number of matches: {len(matches)}")
 
 # invert images
 match_img = cv2.drawMatchesKnn(
-  127 - last_entry.img, kpts1, 127 - slast_entry.img, kpts2, matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
+    127 - last_entry.img, kpts1, 127 - slast_entry.img, kpts2, matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
 )
 
 
@@ -38,14 +38,10 @@ print(f"ransac pruned matches {len(ransac_pruned_matches)}")
 print(f"best_model: {ransac_out.so2} t:{ransac_out.t}")
 
 ransac_match_img = cv2.drawMatchesKnn(
-  127 - last_entry.img, kpts1,
-  127 - slast_entry.img, kpts2,
-  ransac_pruned_matches, None,
-  flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
+    127 - last_entry.img, kpts1, 127 - slast_entry.img, kpts2, ransac_pruned_matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
 )
 
 se3_convert = convert_se2_to_se3(ransac_out, resolution=0.5)
 print(se3_convert)
 
 cloud_visualization(last_entry.cloud, slast_entry.cloud)
-

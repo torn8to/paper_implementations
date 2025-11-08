@@ -56,6 +56,25 @@ def voxelizeXY(mat: np.ndarray, resolution: float) -> np.ndarray:
   """
   return (mat[:, :2] / resolution).astype(np.int32)
 
+def first_stage_debug(map_cloud, position, max_range, resolution):
+  map_cloud_centered = map_cloud - position
+  cols, rows = int(max_range * 2 / resolution), int(max_range * 2 / resolution)  # add one for padding
+  map_points2d = voxelizeXY(map_cloud_centered, resolution)
+  map_points2d[:, 0] = map_points2d[:, 0] - rows // 2
+  map_points2d[:, 1] = cols // 2 - map_points2d[:, 1]
+  map_counts = np.unique(map_points2d, return_counts=True, axis=0)
+  count_image_raw = np.zeros((rows + 2, cols + 2), dtype=np.int32)  # create image with padding
+  return count_image_raw, map_counts
+
+def second_stage_debug(count_image_raw, lower_clipping_threshold):
+  count_image_float = np.array(count_image_raw, dtype=np.float32)
+  max = count_image_float.max()
+  min = count_image_float.min()
+  img_norm_float = (count_image_float - min) / (max - min)
+  img_norm_float[img_norm_float < lower_clipping_threshold] = 0.00
+  img_norm_float = img_norm_float * 127
+  img_formatted = img_norm_float.astype(np.uint8)
+  return img_formatted
 
 def generate_density_image_map(
   map_cloud: np.ndarray, resolution: float, max_range=100, lower_clipping_threshold: float = 0.05, position=np.zeros(3)
@@ -97,26 +116,17 @@ def generate_density_image_map(
   True
   """
   assert position.shape[0] == 3 and len(position.shape) == 1, "position.shape is not right size"
-  map_cloud_centered = map_cloud - position
-  cols, rows = int(max_range * 2 / resolution), int(max_range * 2 / resolution)  # add one for padding
-  map_points2d = voxelizeXY(map_cloud_centered, resolution)
-  map_points2d[:, 0] = map_points2d[:, 0] - rows // 2
-  map_points2d[:, 1] = cols // 2 - map_points2d[:, 1]
-  map_counts = np.unique(map_points2d, return_counts=True, axis=0)
-  count_image_raw = np.zeros((rows + 2, cols + 2), dtype=np.int32)  # create image with padding
+
+  count_image_raw, map_counts = first_stage_debug(map_cloud, position, max_range, resolution)
+
 
   for i in range(map_counts[0].shape[0]):
     pixel = map_counts[0][i]
     pixel_count = map_counts[1][i]
     count_image_raw[pixel[0], pixel[1]] = pixel_count
 
-  count_image_float = np.array(count_image_raw, dtype=np.float32)
-  max = count_image_float.max()
-  min = count_image_float.min()
-  img_norm_float = (count_image_float - min) / (max - min)
-  img_norm_float[img_norm_float < lower_clipping_threshold] = 0.00
-  img_norm_float = img_norm_float * 127
-  img_formatted = img_norm_float.astype(np.uint8)
+  img_formatted = second_stage_debug(count_image_raw, lower_clipping_threshold)
+
   return DensityMap(img_formatted)
 
 
