@@ -7,6 +7,12 @@ wheels/
 
 # Virtual environments
 .venv
+
+
+# cython generated files and j
 *.so
-*.prof
 *.cpp
+
+# ignore data files and profiling giles
+*.txt
+*.prof
