@@ -8,9 +8,9 @@ from cython.operator cimport dereference as deref, preincrement as inc
 from .voxel_types cimport Voxel2d, VoxelMap2d
 
 
-cdef np.ndarray unique_voxel_map_image(np.ndarray[np.int32_t, ndim = 2] cloud_xy_voxels,
-                                       float max_range=100.0,
-                                       float resolution=0.5):
+cdef np.ndarray unique_voxel_map_image(np.ndarray[np.int32_t, ndim = 2] cloud_xy_voxels, 
+                                       int rows,
+                                       int cols):
     ''' Performs unique operation in numpy with count and draws 
         them into an image at the core it works similarly to an MFU 
 
@@ -36,10 +36,6 @@ cdef np.ndarray unique_voxel_map_image(np.ndarray[np.int32_t, ndim = 2] cloud_xy
     
     cdef int num_points = cloud_xy_voxels.shape[0]
     cdef VoxelMap2d v_map = VoxelMap2d()
-    #image  constants
-    cdef int rows, cols
-    rows = <int>((max_range*2)/resolution)
-    cols = <int>((max_range*2)/resolution)
 
     cdef int[:, :] raw_bev_img = np.zeros((rows, cols), dtype=np.int32)
 
@@ -63,9 +59,8 @@ cdef np.ndarray unique_voxel_map_image(np.ndarray[np.int32_t, ndim = 2] cloud_xy
 
 
 cpdef np.ndarray unique_voxel_map(np.ndarray[np.int32_t, ndim = 2] cloud_xy_voxels,
-                                   float max_range=100.0,
-                                   float resolution=0.5,
-                                   np.ndarray position=None):
+                                  int rows, 
+                                  int cols):
     ''' Python-accessible wrapper for unique_voxel_map_image
     
     Parameters
@@ -84,6 +79,4 @@ cpdef np.ndarray unique_voxel_map(np.ndarray[np.int32_t, ndim = 2] cloud_xy_voxe
         returns a voxelized image count where the counted occurrence of voxels is converted to 
         an image representation
     '''
-    return unique_voxel_map_image(cloud_xy_voxels, max_range, resolution)
-
-
+    return unique_voxel_map_image(cloud_xy_voxels, rows, cols)
