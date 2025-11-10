@@ -50,6 +50,8 @@ cdef extern from *:
         VoxelMap2d() except +
         int& operator[](Voxel2d& key)
         size_t size() const
+
+        # use this to iterate through the map similar to an stl iterator
         cppclass iterator:
             iterator() except +
             iterator(iterator&) except +

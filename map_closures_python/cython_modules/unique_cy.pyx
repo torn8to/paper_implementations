@@ -5,10 +5,10 @@ cimport numpy as np
 from libcpp.vector cimport vector
 from libcpp.utility cimport pair
 from cython.operator cimport dereference as deref, preincrement as inc
+from .voxel_types cimport Voxel2d, VoxelMap2d
 
-from cython_modules.voxel_types cimport Voxel2d, VoxelMap2d
 
-cpdef np.ndarray unique_voxel_map_image(np.ndarray[np.int32_t, ndim = 2] cloud_xy_voxels,
+cdef np.ndarray unique_voxel_map_image(np.ndarray[np.int32_t, ndim = 2] cloud_xy_voxels,
                                        float max_range=100.0,
                                        float resolution=0.5):
     ''' Performs unique operation in numpy with count and draws 
@@ -38,10 +38,10 @@ cpdef np.ndarray unique_voxel_map_image(np.ndarray[np.int32_t, ndim = 2] cloud_x
     cdef VoxelMap2d v_map = VoxelMap2d()
     #image  constants
     cdef int rows, cols
-    rows = <int>(max_range/resolution + 1)
-    cols = <int>(max_range/resolution + 1)
+    rows = <int>((max_range*2)/resolution)
+    cols = <int>((max_range*2)/resolution)
 
-    cdef int[:] raw_bev_img = np.zeros(rows * cols, dtype=np.int32)
+    cdef int[:, :] raw_bev_img = np.zeros((rows, cols), dtype=np.int32)
 
     cdef Voxel2d v_xy
     for i in range(num_points):
@@ -57,8 +57,33 @@ cpdef np.ndarray unique_voxel_map_image(np.ndarray[np.int32_t, ndim = 2] cloud_x
         v_xy = entry.first
         # Check bounds before indexing
         if v_xy.x >= 0 and v_xy.x < cols and v_xy.y >= 0 and v_xy.y < rows:
-            index = cols * v_xy.y + v_xy.x
-            raw_bev_img[index] = entry.second
+            raw_bev_img[v_xy.x, v_xy.y] = entry.second
         inc(it)
+    return np.array(raw_bev_img)
 
-    return np.array(raw_bev_img).reshape((rows, cols))
+
+cpdef np.ndarray unique_voxel_map(np.ndarray[np.int32_t, ndim = 2] cloud_xy_voxels,
+                                   float max_range=100.0,
+                                   float resolution=0.5,
+                                   np.ndarray position=None):
+    ''' Python-accessible wrapper for unique_voxel_map_image
+    
+    Parameters
+    __________
+    cloud_xy_voxels: np.ndarray[np.int32_t, ndim = 2]
+       this is N, 2 list of xy coordinates voxelized using a resolution factor
+    max_range: float 
+        the max range considered when drawing the image
+    resolution: float
+       this is the xy voxel dimension size it is assumed to be a square
+    position: np.ndarray (optional, currently unused)
+        position parameter for API compatibility
+    
+    Returns
+    _______
+        returns a voxelized image count where the counted occurrence of voxels is converted to 
+        an image representation
+    '''
+    return unique_voxel_map_image(cloud_xy_voxels, max_range, resolution)
+
+

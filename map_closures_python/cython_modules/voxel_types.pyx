@@ -6,7 +6,7 @@ from libcpp.unordered_map cimport unordered_map
 from libcpp.utility cimport pair
 from .voxel_types cimport Voxel2d as cVoxel2d, VoxelMap2d as cVoxelMap2d
 
-def class Voxel2dPy:
+class Voxel2dPy:
     """Python wrapper for the C++ Voxel2d struct"""
     cdef cVoxel2d cpp_voxel
 
@@ -28,7 +28,7 @@ def class Voxel2dPy:
         return f"Voxel2d(x={self.x}, y={self.y})"
 
 
-def class VoxelMap2dPy:
+class VoxelMap2dPy:
     """Python wrapper for the C++ unordered_map<Voxel2d, int, VoxelHash> 
         
     Atrributes
